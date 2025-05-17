@@ -1,0 +1,191 @@
+VARIABLE patient_id NUMBER;
+
+BEGIN
+  :patient_id := 123;  -- assign your patient ID value here
+END;
+/
+
+SELECT p.Name, t.TestName, tr.ResultValue, tr.ResultUnit, tr.ResultDate
+FROM Patients p
+JOIN TestOrders o ON p.PatientID = o.PatientID
+JOIN TestResults tr ON o.OrderID = tr.OrderID
+JOIN Tests t ON tr.TestID = t.TestID
+WHERE p.PatientID = :patient_id
+ORDER BY tr.ResultDate DESC;
+
+
+
+e) Report Writing Example:
+Create a view or stored procedure that outputs a summary report for senior management showing key metrics like total tests, average cost, average processing time, and number of abnormal results per month.
+
+
+
+ALTER TABLE Tests ADD (NormalRangeLow NUMBER, NormalRangeHigh NUMBER);
+
+-- Example update, you can adjust these values as per your domain knowledge
+UPDATE Tests SET NormalRangeLow = 10, NormalRangeHigh = 50 WHERE TestID = 1;
+UPDATE Tests SET NormalRangeLow = 5, NormalRangeHigh = 30 WHERE TestID = 2;
+-- Continue for other tests ...
+COMMIT;
+
+
+CREATE OR REPLACE VIEW MonthlyTestSummary AS
+SELECT
+    TO_CHAR(tr.ResultDate, 'YYYY-MM') AS YearMonth,
+    COUNT(tr.ResultID) AS TotalTests,
+    ROUND(AVG(t.Cost), 2) AS AvgTestCost,
+    ROUND(AVG(op.ProcessingTimeHours), 2) AS AvgProcessingTimeHours,
+    SUM(CASE 
+          WHEN tr.ResultValue < t.NormalRangeLow OR tr.ResultValue > t.NormalRangeHigh THEN 1 
+          ELSE 0 
+        END) AS AbnormalResults
+FROM TestResults tr
+JOIN Tests t ON tr.TestID = t.TestID
+JOIN TestOrders o ON tr.OrderID = o.OrderID
+JOIN OrderProcessing op ON o.OrderID = op.OrderID
+WHERE tr.Status = 'Completed'
+GROUP BY TO_CHAR(tr.ResultDate, 'YYYY-MM')
+ORDER BY YearMonth;
+
+
+-- Enable DBMS output in your client (e.g. SQL Developer)
+SET SERVEROUTPUT ON;
+
+-- Call the procedure for January 2024 to May 2024
+EXEC GetMonthlyTestSummary('2024-01', '2024-05');
+
+
+Create a PL/SQL procedure that simulates data loading (ETL) from staging tables into the main schema, applying transformations or validations.
+
+CREATE TABLE Staging_Patients (
+    StagingID     NUMBER PRIMARY KEY,
+    Name          VARCHAR2(100),
+    DOB           DATE,
+    Gender        VARCHAR2(10),
+    Email         VARCHAR2(100)
+);
+
+
+CREATE TABLE Patients1 (
+    PatientID NUMBER PRIMARY KEY,
+    Name      VARCHAR2(100),
+    DOB       DATE,
+    Gender    VARCHAR2(10),
+    Email     VARCHAR2(100),
+    LoadDate  DATE
+);
+
+CREATE SEQUENCE seq_patients1_id
+START WITH 1
+INCREMENT BY 1
+NOCACHE
+NOCYCLE;
+
+CREATE OR REPLACE TRIGGER trg_patients1_bi
+BEFORE INSERT ON Patients1
+FOR EACH ROW
+BEGIN
+  IF :NEW.PatientID IS NULL THEN
+    SELECT seq_patients1_id.NEXTVAL INTO :NEW.PatientID FROM dual;
+  END IF;
+END;
+/
+
+
+CREATE TABLE Patient_Load_Errors (
+    ErrorID       NUMBER PRIMARY KEY,
+    StagingID     NUMBER,
+    ErrorMessage  VARCHAR2(4000),
+    ErrorDate     DATE DEFAULT SYSDATE
+);
+
+
+CREATE SEQUENCE seq_error_id
+START WITH 1
+INCREMENT BY 1
+NOCACHE
+NOCYCLE;
+
+CREATE OR REPLACE TRIGGER trg_error_id_bi
+BEFORE INSERT ON Patient_Load_Errors
+FOR EACH ROW
+BEGIN
+  IF :NEW.ErrorID IS NULL THEN
+    SELECT seq_error_id.NEXTVAL INTO :NEW.ErrorID FROM dual;
+  END IF;
+END;
+/
+
+
+
+1. Staging Table: Staging_Patients
+sql
+Copy
+Edit
+INSERT INTO Staging_Patients (StagingID, Name, DOB, Gender, Email)
+VALUES (1, 'john doe', TO_DATE('1990-01-15', 'YYYY-MM-DD'), 'Male', 'john.doe@example.com');
+
+INSERT INTO Staging_Patients (StagingID, Name, DOB, Gender, Email)
+VALUES (2, NULL, TO_DATE('1985-05-30', 'YYYY-MM-DD'), 'Female', 'jane@example.com'); -- Invalid: Name is NULL
+
+INSERT INTO Staging_Patients (StagingID, Name, DOB, Gender, Email)
+VALUES (3, 'MARY SMITH', NULL, 'Female', 'mary.smith@example.com'); -- Invalid: DOB is NULL
+
+INSERT INTO Staging_Patients (StagingID, Name, DOB, Gender, Email)
+VALUES (4, 'Alice Green', TO_DATE('1978-11-22', 'YYYY-MM-DD'), 'Unknown', 'alice@example.com'); -- Invalid: Gender
+
+INSERT INTO Staging_Patients (StagingID, Name, DOB, Gender, Email)
+VALUES (5, 'Bob Brown', TO_DATE('1992-08-09', 'YYYY-MM-DD'), 'Male', 'bob.brownatexample.com'); -- Invalid: Email format
+
+INSERT INTO Staging_Patients (StagingID, Name, DOB, Gender, Email)
+VALUES (6, 'Charlie Black', TO_DATE('1980-02-17', 'YYYY-MM-DD'), 'Other', 'charlie@example.com');
+
+
+CREATE OR REPLACE PROCEDURE Load_Patients_From_Staging IS
+    CURSOR c_staging IS
+        SELECT * FROM Staging_Patients;
+
+    v_error_msg VARCHAR2(4000);
+BEGIN
+    FOR rec IN c_staging LOOP
+        BEGIN
+            -- 1. VALIDATIONS
+            IF rec.Name IS NULL THEN
+                v_error_msg := 'Name is NULL';
+                RAISE_APPLICATION_ERROR(-20001, v_error_msg);
+            ELSIF rec.DOB IS NULL THEN
+                v_error_msg := 'DOB is NULL';
+                RAISE_APPLICATION_ERROR(-20002, v_error_msg);
+            ELSIF rec.Gender NOT IN ('Male', 'Female', 'Other') THEN
+                v_error_msg := 'Invalid Gender';
+                RAISE_APPLICATION_ERROR(-20003, v_error_msg);
+            ELSIF rec.Email NOT LIKE '%@%' THEN
+                v_error_msg := 'Invalid Email format';
+                RAISE_APPLICATION_ERROR(-20004, v_error_msg);
+            END IF;
+
+            -- 2. TRANSFORMATION (Capitalize Name)
+            INSERT INTO Patients1 (Name, DOB, Gender, Email, LoadDate)
+            VALUES (
+                INITCAP(rec.Name),
+                rec.DOB,
+                rec.Gender,
+                LOWER(rec.Email),
+                SYSDATE
+            );
+
+            -- 3. Delete or mark processed record
+            DELETE FROM Staging_Patients WHERE StagingID = rec.StagingID;
+
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_error_msg := SQLERRM;
+                INSERT INTO Patient_Load_Errors (StagingID, ErrorMessage, ErrorDate)
+                VALUES (rec.StagingID, v_error_msg, SYSDATE);
+        END;
+    END LOOP;
+
+    COMMIT;
+END;
+/
+

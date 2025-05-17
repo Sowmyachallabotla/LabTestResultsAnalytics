@@ -1,0 +1,224 @@
+CREATE TABLE Patients (
+    PatientID NUMBER PRIMARY KEY,
+    Name VARCHAR2(100),
+    DOB DATE,
+    Gender VARCHAR2(10),
+    ContactInfo VARCHAR2(50)
+);
+
+CREATE TABLE Doctors (
+    DoctorID NUMBER PRIMARY KEY,
+    Name VARCHAR2(100),
+    Specialty VARCHAR2(50)
+);
+
+CREATE TABLE LabLocations (
+    LabID NUMBER PRIMARY KEY,
+    LocationName VARCHAR2(100),
+    City VARCHAR2(50),
+    State VARCHAR2(2)
+);
+
+CREATE TABLE Tests (
+    TestID NUMBER PRIMARY KEY,
+    TestName VARCHAR2(100),
+    TestCategory VARCHAR2(50),
+    Cost NUMBER(10, 2)
+);
+
+CREATE TABLE TestOrders (
+    OrderID NUMBER PRIMARY KEY,
+    PatientID NUMBER,
+    OrderDate DATE,
+    OrderedByDoctorID NUMBER,
+    FOREIGN KEY (PatientID) REFERENCES Patients(PatientID),
+    FOREIGN KEY (OrderedByDoctorID) REFERENCES Doctors(DoctorID)
+);
+
+CREATE TABLE TestResults (
+    ResultID NUMBER PRIMARY KEY,
+    OrderID NUMBER,
+    TestID NUMBER,
+    ResultValue NUMBER(10, 2),
+    ResultUnit VARCHAR2(20),
+    ResultDate DATE,
+    Status VARCHAR2(20),
+    FOREIGN KEY (OrderID) REFERENCES TestOrders(OrderID),
+    FOREIGN KEY (TestID) REFERENCES Tests(TestID)
+);
+
+CREATE TABLE OrderProcessing (
+    ProcessingID NUMBER PRIMARY KEY,
+    OrderID NUMBER,
+    LabID NUMBER,
+    ReceivedDate DATE,
+    CompletedDate DATE,
+    ProcessingTimeHours NUMBER(10, 2),
+    FOREIGN KEY (OrderID) REFERENCES TestOrders(OrderID),
+    FOREIGN KEY (LabID) REFERENCES LabLocations(LabID)
+);
+
+
+
+
+
+
+
+
+
+ Complex SQL Queries & Reports to Build
+a) Patient Test History Report
+Show all tests taken by a patient with results and dates.
+
+
+SELECT p.Name, t.TestName, tr.ResultValue, tr.ResultUnit, tr.ResultDate
+FROM Patients p
+JOIN TestOrders o ON p.PatientID = o.PatientID
+JOIN TestResults tr ON o.OrderID = tr.OrderID
+JOIN Tests t ON tr.TestID = t.TestID
+WHERE p.PatientID = :patient_id
+ORDER BY tr.ResultDate DESC;
+b) Average Test Processing Time by Lab Location
+Calculate average time (in hours) it takes labs to complete tests.
+
+
+SELECT l.LocationName, AVG(op.ProcessingTimeHours) AS AvgProcessingTime
+FROM LabLocations l
+JOIN OrderProcessing op ON l.LabID = op.LabID
+GROUP BY l.LocationName
+ORDER BY AvgProcessingTime;
+c) Test Volume Trends
+Number of tests performed per month for a given test category (e.g. Blood).
+
+
+SELECT TO_CHAR(o.OrderDate, 'YYYY-MM') AS YearMonth, COUNT(*) AS TestCount
+FROM TestOrders o
+JOIN TestResults tr ON o.OrderID = tr.OrderID
+JOIN Tests t ON tr.TestID = t.TestID
+WHERE t.TestCategory = 'Blood'
+GROUP BY TO_CHAR(o.OrderDate, 'YYYY-MM')
+ORDER BY YearMonth;
+d) Identify Tests with Abnormal Results
+Assuming normal ranges for tests are predefined, find test results outside normal ranges.
+
+
+SELECT p.Name, t.TestName, tr.ResultValue, tr.ResultUnit, tr.ResultDate
+FROM TestResults tr
+JOIN TestOrders o ON tr.OrderID = o.OrderID
+JOIN Patients p ON o.PatientID = p.PatientID
+JOIN Tests t ON tr.TestID = t.TestID
+WHERE (tr.ResultValue < t.NormalRangeLow OR tr.ResultValue > t.NormalRangeHigh)
+AND tr.Status = 'Completed';
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+1. Get the Most Recent Test Result per Patient per Test
+Use ROW_NUMBER() to rank test results by date and pick the latest for each patient and test:
+
+sql
+Copy
+Edit
+SELECT *
+FROM (
+  SELECT 
+    p.PatientID,
+    p.Name,
+    t.TestName,
+    tr.ResultValue,
+    tr.ResultDate,
+    ROW_NUMBER() OVER (PARTITION BY p.PatientID, t.TestID ORDER BY tr.ResultDate DESC) AS rn
+  FROM Patients p
+  JOIN TestOrders o ON p.PatientID = o.PatientID
+  JOIN TestResults tr ON o.OrderID = tr.OrderID
+  JOIN Tests t ON tr.TestID = t.TestID
+  WHERE tr.Status = 'Completed'
+) WHERE rn = 1;
+Explanation:
+
+PARTITION BY p.PatientID, t.TestID creates groups per patient and test
+
+ORDER BY tr.ResultDate DESC ranks latest results first
+
+Filter rn = 1 gets the latest test result per patient-test combo
+
+2. Rank Patients by Number of Tests Taken
+Using RANK() to assign ranks to patients based on total tests taken:
+
+sql
+Copy
+Edit
+SELECT 
+  PatientID,
+  Name,
+  TestCount,
+  RANK() OVER (ORDER BY TestCount DESC) AS TestRank
+FROM (
+  SELECT 
+    p.PatientID,
+    p.Name,
+    COUNT(*) AS TestCount
+  FROM Patients p
+  JOIN TestOrders o ON p.PatientID = o.PatientID
+  JOIN TestResults tr ON o.OrderID = tr.OrderID
+  WHERE tr.Status = 'Completed'
+  GROUP BY p.PatientID, p.Name
+);
+3. Show Changes in Test Results Over Time Using LAG()
+Track how a patient’s test result changes from previous test date:
+
+sql
+Copy
+Edit
+SELECT 
+  p.PatientID,
+  p.Name,
+  t.TestName,
+  tr.ResultDate,
+  tr.ResultValue,
+  LAG(tr.ResultValue) OVER (PARTITION BY p.PatientID, t.TestID ORDER BY tr.ResultDate) AS PreviousResult,
+  tr.ResultValue - LAG(tr.ResultValue) OVER (PARTITION BY p.PatientID, t.TestID ORDER BY tr.ResultDate) AS ResultChange
+FROM Patients p
+JOIN TestOrders o ON p.PatientID = o.PatientID
+JOIN TestResults tr ON o.OrderID = tr.OrderID
+JOIN Tests t ON tr.TestID = t.TestID
+WHERE tr.Status = 'Completed'
+ORDER BY p.PatientID, t.TestName, tr.ResultDate;
+This shows the previous test value and the change (difference) from the previous test result.
+
+4. Identify Tests with Delayed Processing Using LEAD()
+Compare each test order’s completion date with the next order’s date for the same patient to find gaps/delays:
+
+sql
+Copy
+Edit
+SELECT
+  o.OrderID,
+  p.PatientID,
+  p.Name,
+  o.OrderDate,
+  op.CompletedDate,
+  LEAD(o.OrderDate) OVER (PARTITION BY p.PatientID ORDER BY o.OrderDate) AS NextOrderDate,
+  LEAD(o.OrderDate) OVER (PARTITION BY p.PatientID ORDER BY o.OrderDate) - o.OrderDate AS DaysUntilNextOrder
+FROM TestOrders o
+JOIN Patients p ON o.PatientID = p.PatientID
+LEFT JOIN OrderProcessing op ON o.OrderID = op.OrderID
+ORDER BY p.PatientID, o.OrderDate;
+This can help identify gaps in ordering frequency or delays between tests.
+

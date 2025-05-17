@@ -1,0 +1,30 @@
+1. Indexing Key Columns
+Indexes drastically improve query performance, especially on join columns and columns used in WHERE clauses.
+
+For your schema, useful indexes could be:
+
+sql
+Copy
+Edit
+-- Indexes on foreign keys and columns used in JOINs/filters:
+
+CREATE INDEX idx_testorders_patientid ON TestOrders(PatientID);
+CREATE INDEX idx_testorders_doctorid ON TestOrders(OrderedByDoctorID);
+
+CREATE INDEX idx_testresults_orderid ON TestResults(OrderID);
+CREATE INDEX idx_testresults_testid ON TestResults(TestID);
+CREATE INDEX idx_testresults_status ON TestResults(Status);
+
+CREATE INDEX idx_orderprocessing_orderid ON OrderProcessing(OrderID);
+CREATE INDEX idx_orderprocessing_labid ON OrderProcessing(LabID);
+
+-- Index on TestCategory since it is used in WHERE clause:
+CREATE INDEX idx_tests_testcategory ON Tests(TestCategory);
+
+-- Index on OrderDate for date-range queries:
+CREATE INDEX idx_testorders_orderdate ON TestOrders(OrderDate);
+Notes:
+
+Avoid over-indexing: create indexes only on columns frequently used in WHERE, JOIN, ORDER BY.
+
+Oracle automatically creates indexes on primary keys but foreign keys often benefit from manual indexing.
